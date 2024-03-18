@@ -13,15 +13,16 @@ The stereo method of hand-crafted Markov Random Field (MRF) lacks sufficient mod
 ## Highlights
 
 - **High accuracy & efficiency**
+  
 
-  NMRF-Stereo reports state-of-the-art accuracy on Scene Flow and ranks $1^{st}$ on [KITTI 2012](https://www.cvlibs.net/datasets/kitti/eval_stereo_flow.php?benchmark=stereo) and [KITTI 2015](https://www.cvlibs.net/datasets/kitti/eval_scene_flow.php?benchmark=stereo) learderboards among all published methods at the time of submission. The model runs at 90ms (RTX 3090) for KITTI data (1242x375).
-
+  NMRF-Stereo reports state-of-the-art accuracy on Scene Flow and ranks first on [KITTI 2012](https://www.cvlibs.net/datasets/kitti/eval_stereo_flow.php?benchmark=stereo) and [KITTI 2015](https://www.cvlibs.net/datasets/kitti/eval_scene_flow.php?benchmark=stereo) learderboards among all published methods at the time of submission. The model runs at 90ms (RTX 3090) for KITTI data (1242x375).
+  
 - **Strong cross-domain generalization**
 
   NMRF-Stereo exhibits great generalization abilities on other dataset/scenes. The model is trained only with synthetic Scene Flow data:
 
-    ![eth3d](assets/eth3d.png)
-    ![middlebury](assets/middlebury.png)
+  ![eth3d](assets/eth3d.png)
+  ![middlebury](assets/middlebury.png)
   
 - **Sharp depth boundaries**
 
