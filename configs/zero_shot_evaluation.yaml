@@ -1,0 +1,11 @@
+SOLVER:
+  NO_RESUME_OPTIMIZER: True
+DATASETS:
+  TEST: ("kitti_2012_trainval", "kitti_2015_trainval", "eth3d", "middlebury_Q")
+TEST:
+  EVAL_THRESH: (['3.0'], ['3.0'], ['1.0'], ['2.0'])
+  EVAL_MAX_DISP: [null, null, null, 1000]
+  EVAL_ONLY_VALID: (True, True, True, False)
+  EVAL_PROP: (True, True, True, True)
+DPN:
+  MAX_DISP: 312
