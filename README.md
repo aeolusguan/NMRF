@@ -159,7 +159,7 @@ and then access [http://localhost:6006](http://localhost:6066) in your browser.
 If you find our work useful in your research, please consider citing our paper:
 
 ```bibtex
-@inproceedings{guan2024nmrf,
+@inproceedings{guan2024neural,
   title={Neural Markov Random Field for Stereo Matching},
   author={Guan, Tongfan and Wang, Chen and Liu, Yun-Hui},
   booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition},
