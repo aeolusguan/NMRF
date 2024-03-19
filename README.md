@@ -2,7 +2,7 @@
 
 Official PyTorch implementation of paper:
 
-**Neural Markov Random Field for Stereo Matching**, **CVPR 2024**<br/>
+[**Neural Markov Random Field for Stereo Matching**](https://arxiv.org/abs/2403.11193), **CVPR 2024**<br/>
 Tongfan Guan, Chen Wang, Yun-Hui Liu<br/>
 
 ## Introduction
