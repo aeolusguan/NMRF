@@ -15,7 +15,7 @@ The stereo method of hand-crafted Markov Random Field (MRF) lacks sufficient mod
 - **High accuracy & efficiency**
   
 
-  NMRF-Stereo reports state-of-the-art accuracy on Scene Flow and ranks first on [KITTI 2012](https://www.cvlibs.net/datasets/kitti/eval_stereo_flow.php?benchmark=stereo) and [KITTI 2015](https://www.cvlibs.net/datasets/kitti/eval_scene_flow.php?benchmark=stereo) learderboards among all published methods at the time of submission. The model runs at 90ms (RTX 3090) for KITTI data (1242x375).
+  NMRF-Stereo reports state-of-the-art accuracy on Scene Flow and ranks first on [KITTI 2012](https://www.cvlibs.net/datasets/kitti/eval_stereo_flow.php?benchmark=stereo) and [KITTI 2015](https://www.cvlibs.net/datasets/kitti/eval_scene_flow.php?benchmark=stereo) leaderboards among all published methods at the time of submission. The model runs at 90ms (RTX 3090) for KITTI data (1242x375).
   
 - **Strong cross-domain generalization**
 
@@ -159,13 +159,11 @@ and then access [http://localhost:6006](http://localhost:6066) in your browser.
 If you find our work useful in your research, please consider citing our paper:
 
 ```bibtex
-@misc{guan2024neural,
-      title={Neural Markov Random Field for Stereo Matching}, 
-      author={Tongfan Guan and Chen Wang and Yun-Hui Liu},
-      year={2024},
-      eprint={2403.11193},
-      archivePrefix={arXiv},
-      primaryClass={cs.CV}
+@article{guan2024neural,
+  title={Neural Markov Random Field for Stereo Matching},
+  author={Guan, Tongfan and Wang, Chen and Liu, Yun-Hui},
+  journal={arXiv preprint arXiv:2403.11193},
+  year={2024}
 }
 ```
 
