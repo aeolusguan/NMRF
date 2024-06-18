@@ -45,10 +45,11 @@ conda activate NMRF
 ```
 
 ~~2. Build superpixel-guided disparity downsample operator:~~
-
-~~```shell~~
-~~cd kernels/downsample && python setup.py install --user && cd ../..~~
-~~```~~
+<strike>
+```shell
+cd kernels/downsample && python setup.py install --user && cd ../..
+```
+</strike>
 
 ## Dataset Preparation
 To train/evaluate NMRF-Stereo, you will need to download the required datasets.
