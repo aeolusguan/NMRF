@@ -30,6 +30,9 @@ The stereo method of hand-crafted Markov Random Field (MRF) lacks sufficient mod
   
   ![pointcloud](assets/kitti_pt.png)
 
+## :new: Updates
+
+[2024/06/18] We remove dependency on the cumbersome super-pixel guided disparity downsample and slightly better results.
 ## Installation
 
 Our code is developed on Ubuntu 20.04 using Python 3.8 and PyTorch 1.13. Please note that the code has only been tested with these specified versions. We recommend using [conda]((https://www.anaconda.com/distribution/)) for the installation of dependencies:
@@ -41,11 +44,11 @@ conda env create -f environment.yml
 conda activate NMRF
 ```
 
-2. Build superpixel-guided disparity downsample operator:
+~~2. Build superpixel-guided disparity downsample operator:~~
 
-```shell
-cd kernels/downsample && python setup.py install --user && cd ../..
-```
+~~```shell~~
+~~cd kernels/downsample && python setup.py install --user && cd ../..~~
+~~```~~
 
 ## Dataset Preparation
 To train/evaluate NMRF-Stereo, you will need to download the required datasets.
