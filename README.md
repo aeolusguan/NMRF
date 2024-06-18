@@ -37,15 +37,14 @@ The stereo method of hand-crafted Markov Random Field (MRF) lacks sufficient mod
 ## Installation
 
 Our code is developed on Ubuntu 20.04 using Python 3.8 and PyTorch 1.13. Please note that the code has only been tested with these specified versions. We recommend using [conda]((https://www.anaconda.com/distribution/)) for the installation of dependencies:
-
-1. Create the `NMRF` conda environment and install all dependencies:
+* Create the `NMRF` conda environment and install all dependencies:
 
 ```shell
 conda env create -f environment.yml
 conda activate NMRF
 ```
 
-~~2. Build superpixel-guided disparity downsample operator:~~
+* ~~Build superpixel-guided disparity downsample operator:~~
 <strike>
 ```shell
 cd kernels/downsample && python setup.py install --user && cd ../..
