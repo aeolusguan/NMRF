@@ -79,14 +79,6 @@ class StereoDataset(data.Dataset):
 
         img1 = frame_utils.read_gen(self.image_list[index][0])
         img2 = frame_utils.read_gen(self.image_list[index][1])
-        super_pixel_label = self.image_list[index][0][:-len('.png')] + "_lsc_lbl.png"
-        if not os.path.exists(super_pixel_label):
-            img = cv2.cvtColor(np.array(img1), cv2.COLOR_RGB2BGR)
-            lsc = cv2.ximgproc.createSuperpixelLSC(img, region_size=10, ratio=0.075)
-            lsc.iterate(20)
-            label = lsc.getLabels()
-            cv2.imwrite(super_pixel_label, label.astype(np.uint16))
-        super_pixel_label = frame_utils.read_super_pixel_label(super_pixel_label)
 
         img1 = np.array(img1).astype(np.uint8)
         img2 = np.array(img2).astype(np.uint8)
@@ -110,9 +102,9 @@ class StereoDataset(data.Dataset):
 
         if self.augmentor is not None:
             if self.sparse:
-                img1, img2, flow, super_pixel_label, occlusion_map, occlusion_map_2, valid = self.augmentor(img1, img2, flow, super_pixel_label, occlusion_map, valid)
+                img1, img2, flow, occlusion_map, occlusion_map_2, valid = self.augmentor(img1, img2, flow, occlusion_map, valid)
             else:
-                img1, img2, flow, super_pixel_label, occlusion_map, occlusion_map_2 = self.augmentor(img1, img2, flow, super_pixel_label, occlusion_map)
+                img1, img2, flow, occlusion_map, occlusion_map_2 = self.augmentor(img1, img2, flow, occlusion_map)
         else:
             occlusion_map_2 = np.zeros(img1.shape[:2], dtype=bool)
 
@@ -125,7 +117,6 @@ class StereoDataset(data.Dataset):
         else:
             valid = sample['disp'] < 512
 
-        sample['super_pixel_label'] = torch.from_numpy(super_pixel_label)
         sample['occlusion_map'] = torch.from_numpy(occlusion_map)
         sample['occlusion_map_2'] = torch.from_numpy(occlusion_map_2)
         sample['valid'] = valid

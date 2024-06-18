@@ -11,10 +11,11 @@ import numpy as np
 import torch
 from torch import nn
 from torch.utils.data.sampler import Sampler
+from einops import rearrange
 
 from nmrf.utils.logger import log_every_n_seconds
 from nmrf.utils import dist_utils as comm
-from nmrf.utils import frame_utils
+from nmrf.utils.frame_utils import InputPadder
 
 
 def print_csv_format(results):
@@ -359,15 +360,14 @@ class DispEvaluator(DatasetEvaluator):
 
             if self._eval_prop:
                 proposal = output['proposal'] * 8
-                superpixel_label = input['super_pixel_label'].to(disp_pr.device)
                 disp_gt_clone = disp_gt.clone()
                 disp_gt_clone[~valid_gt] = 0
-                mini_disp_gt = frame_utils.downsample_disp(disp_gt_clone[None], superpixel_label[None])[0]
-                mini_disp_gt = mini_disp_gt.flatten(end_dim=1)
-                epe = torch.cdist(mini_disp_gt[..., None], proposal[..., None], p=1)
-                epe[mini_disp_gt == 0, :] = 1e6
-                epe, _ = torch.min(epe.flatten(start_dim=1), dim=1)
-                mask = (((mini_disp_gt > 0) & (mini_disp_gt < self._max_disp)).sum(dim=-1)) > 0.5
+                padder = InputPadder(disp_gt_clone.shape, mode='proposal', divis_by=8)
+                disp_gt_clone = padder.pad(disp_gt_clone[None][None])[0]
+                disp_gt = rearrange(disp_gt_clone, '1 1 (h m) (w n) -> (h w) (m n)', m=8, n=8)
+                epe = torch.cdist(disp_gt[..., None], proposal[..., None], p=1)
+                epe, _ = torch.min(epe, dim=-1, keepdim=False)
+                mask = (disp_gt > 0) & (disp_gt < self._max_disp)
                 if np.isnan(epe[mask].mean().item()):
                     continue
                 self._prop_epe.append(epe[mask].mean().item())

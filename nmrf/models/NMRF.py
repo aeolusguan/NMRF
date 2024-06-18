@@ -6,9 +6,8 @@ import torch.nn.functional as F
 from einops import rearrange
 from timm.models.layers import trunc_normal_
 
-from nmrf.utils.frame_utils import InputPadder, downsample_disp
+from nmrf.utils.frame_utils import InputPadder
 from nmrf.config import configurable
-from nmrf.models.matcher import bf_match
 from nmrf.models.backbone import Backbone
 from nmrf.models.DPN import DPN
 from nmrf.models.submodule import build_correlation_volume
@@ -294,30 +293,17 @@ class Criterion(nn.Module):
             self.loss_fn = F.l1_loss
 
     def loss_prop(self, disp_prop, gt_disp):
+        """
+        disp_prop: [B*h*w,N]
+        gt_disp: [B,H,W], where H=8*h, W=8*w
+        """
         tgt_disp = gt_disp.clone()
-        # ground truth modes larger than 320 are ignored in following sort and matching
+        # ground truth modes larger than 320 are ignored in following matching
         tgt_disp[tgt_disp >= 320] = 0
+        tgt_disp = rearrange(tgt_disp, 'b (h m) (w n) -> (b h w) (m n)', m=8, n=8)
         dist = (tgt_disp[:, :, None] - disp_prop[:, None, :]).abs()
-        dist[tgt_disp == 0, :] = 1e6  # avoid assigned to null gt
-        dist = torch.min(dist, dim=-1, keepdim=False)[0]
-        indices = dist.argsort(dim=-1)
-        # sort ground truth modes based on distance to the proposal set
-        tgt_disp = torch.gather(tgt_disp, dim=-1, index=indices)
-
-        # nms
-        for i in range(3):
-            dist = (tgt_disp[:, i+1:] - tgt_disp[:, i:i+1]).abs()
-            mask = (tgt_disp[:, i:i+1] > 0) & (dist < 8)
-            tgt_disp[:, i+1:][mask] = 0
-
-        # Retrieve the bipartite matching between proposals and ground truth modes
-        num_seed = disp_prop.shape[1]
-        if num_seed < 4:
-            disp_prop_pad = tgt_disp.clone()
-            disp_prop_pad[:, :num_seed] = disp_prop
-            disp_prop = disp_prop_pad
-        indices, disp_error = bf_match(disp_prop, tgt_disp)
-        src_disp = torch.gather(disp_prop, dim=1, index=indices)
+        _, indices = torch.min(dist, dim=-1, keepdim=False)
+        src_disp = torch.gather(disp_prop, dim=-1, index=indices)
 
         mask = (tgt_disp > 0) & (tgt_disp < self.max_disp)
         total_gts = torch.sum(mask)
@@ -325,62 +311,46 @@ class Criterion(nn.Module):
         loss_disp = F.smooth_l1_loss(src_disp[mask], tgt_disp[mask], reduction='sum')
         losses = {'proposal_disp': loss_disp / (total_gts + 1e-6)}
 
-        # for logging
-        valid_pixs = disp_error[disp_error != 1e5]
-        losses['disp_error'] = valid_pixs.sum() / (valid_pixs.numel() + 1e-6)
-
         return losses
 
     @staticmethod
-    def loss_init(prob, tgt_disp, gt_disp, occlusion_map, occlusion_map_2):
-        N = tgt_disp.shape[-1]
-        bs, ht, wd = gt_disp.shape
-        ht = ht // 8
-        wd = wd // 8
+    def loss_init(prob, gt_disp, occlusion_map, occlusion_map_2):
         nd = prob.shape[-1]
+        bs, ht, wd = gt_disp.shape
+        gt_disp = torch.clamp(gt_disp, min=0)
+        valid = (gt_disp > 0) & (gt_disp < 320) & (~occlusion_map)
 
-        # downsample occlusion_map and determine the valid ground truth modes
-        gt_disp_clone = gt_disp.clone()
-        gt_disp_clone[occlusion_map] = math.inf  # invalidate occluded pixel disparities
-        gt_disp_clone = rearrange(gt_disp_clone, 'b (h hs) (w ws) -> (b h w) (hs ws)', hs=8, ws=8)
-        dist = torch.abs(tgt_disp[:, :, None] - gt_disp_clone[:, None, :])
-        # a mode regard as non-occlusion if at least two non-occluded pixels close to it at threshold 4
-        nocc_map = torch.sum(dist < 4, dim=-1, keepdim=False) >= 2  # [B*H*W,N]
-        valid = (tgt_disp > 0) & (tgt_disp < 320) & nocc_map
+        ref = torch.arange(0, wd, dtype=torch.int64, device=prob.device).reshape(1, 1, -1).repeat(bs, ht, 1)
+        coord = ref - gt_disp  # corresponding coordinate in the right view
+        valid = torch.logical_and(valid, coord >= 0)  # correspondence should within image boundary
+        coord = torch.clamp(torch.floor(coord), min=0).to(torch.int64)
+        nocc_map_2 = ~occlusion_map_2
+        nocc_map_2 = torch.gather(nocc_map_2, dim=-1, index=coord)  # whether correspondence is occluded
 
-        # downsample occlusion_map_2
-        occlusion_map_2 = rearrange(occlusion_map_2, 'b (h hs) (w ws) -> (b h w) (hs ws)', hs=8, ws=8)
-        nocc_map_2 = torch.sum(occlusion_map_2, dim=-1, keepdim=False) < 40
-        nocc_map_2 = nocc_map_2.reshape(bs, ht, wd)
+        valid = torch.logical_and(valid, nocc_map_2)
 
         # scale ground-truth disparities
-        tgt_disp = tgt_disp / 8
+        tgt_disp = gt_disp / 8
 
-        # each pixel has at most 4 modes, the weight for each mode are [0.5, 0.3, 0.1, 0.1]
-        weights = torch.tensor([0.5, 0.3, 0.1, 0.1], dtype=tgt_disp.dtype, device=tgt_disp.device)
-        weights = weights.view(1, -1).repeat(prob.shape[0], 1)  # [B*H*W,N]
+        weights = torch.ones_like(tgt_disp)
         weights[~valid] = 0
 
-        ref = torch.arange(0, wd, dtype=torch.int64, device=prob.device).reshape(1, 1, -1).repeat(bs, ht, 1).reshape(bs*ht*wd, 1)
+        tgt_disp = rearrange(tgt_disp, 'b (h m) (w n) -> (b h w) (m n)', m=8, n=8)
+        weights = rearrange(weights, 'b (h m) (w n) -> (b h w) (m n)', m=8, n=8)
+        valid = rearrange(valid, 'b (h m) (w n) -> (b h w) (m n)', m=8, n=8)
+
         lower_bound = torch.floor(tgt_disp).to(torch.int64)
         high_bound = lower_bound + 1
         high_prob = tgt_disp - lower_bound
         lower_bound = torch.clamp(lower_bound, max=nd-1)
-        lower_coord = torch.clamp(ref - lower_bound, min=0)
         high_bound = torch.clamp(high_bound, max=nd-1)
-        high_coord = torch.clamp(ref - high_bound, min=0)
 
-        nocc_map_2_lower = torch.gather(nocc_map_2, dim=-1, index=lower_coord.view(bs, ht, -1)).reshape(-1, N)
-        lower_prob = (1 - high_prob) * weights * nocc_map_2_lower
-        nocc_map_2_high = torch.gather(nocc_map_2, dim=-1, index=high_coord.view(bs, ht, -1)).reshape(-1, N)
-        high_prob = high_prob * weights * nocc_map_2_high
+        lower_prob = (1 - high_prob) * weights
+        high_prob = high_prob * weights
 
-        labels = [torch.zeros_like(prob) for _ in range(N)]
-        for i, label in enumerate(labels):
-            label.scatter_(dim=-1, index=high_bound[:, i:i+1], src=high_prob[:, i:i+1])
-            label.scatter_(dim=-1, index=lower_bound[:, i:i+1], src=lower_prob[:, i:i+1])
-        labels = torch.stack(labels, dim=0)
-        label, _ = torch.max(labels, dim=0, keepdim=False)
+        label = torch.zeros_like(prob)
+        label.scatter_reduce_(dim=-1, index=lower_bound, src=lower_prob, reduce="sum")
+        label.scatter_reduce_(dim=-1, index=high_bound, src=high_prob, reduce="sum")
 
         # normalize weights
         normalizer = torch.clamp(torch.sum(label, dim=-1, keepdim=True), min=1e-3)
@@ -434,13 +404,9 @@ class Criterion(nn.Module):
         tgt_disp[~valid] = 0
         occlusion_map = targets['occlusion_map'].to(device)
         occlusion_map_2 = targets['occlusion_map_2'].to(device)
-        label = targets['super_pixel_label'].to(device)
-        tgt_disp_mini = downsample_disp(tgt_disp, label)
-        bs, ht = tgt_disp_mini.shape[:2]
-        tgt_disp_mini = tgt_disp_mini.reshape(-1, 4)  # [B*H*W, 4]
 
-        losses = self.loss_prop(disp_prop, tgt_disp_mini)
-        losses.update(self.loss_init(prob, tgt_disp_mini, tgt_disp, occlusion_map, occlusion_map_2))
+        losses = self.loss_prop(disp_prop, tgt_disp)
+        losses.update(self.loss_init(prob, tgt_disp, occlusion_map, occlusion_map_2))
         if 'disp_pred' in outputs_without_aux:
             disp_pred = outputs_without_aux['disp_pred'] * 4
             losses.update(self.loss_disp(disp_pred, tgt_disp))
