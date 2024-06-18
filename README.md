@@ -44,8 +44,8 @@ conda env create -f environment.yml
 conda activate NMRF
 ```
 
-~~2. Build superpixel-guided disparity downsample operator:~~
 <strike>
+2. Build superpixel-guided disparity downsample operator:
 ```shell
 cd kernels/downsample && python setup.py install --user && cd ../..
 ```
