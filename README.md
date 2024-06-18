@@ -32,7 +32,8 @@ The stereo method of hand-crafted Markov Random Field (MRF) lacks sufficient mod
 
 ## :new: Updates
 
-[2024/06/18] We remove dependency on the cumbersome super-pixel guided disparity downsample and slightly better results.
+[2024/06/18] We remove dependency on the cumbersome super-pixel guided disparity downsample and achieve slightly better results.
+
 ## Installation
 
 Our code is developed on Ubuntu 20.04 using Python 3.8 and PyTorch 1.13. Please note that the code has only been tested with these specified versions. We recommend using [conda]((https://www.anaconda.com/distribution/)) for the installation of dependencies:
