@@ -332,55 +332,43 @@ class Criterion(nn.Module):
         return losses
 
     @staticmethod
-    def loss_init(prob, tgt_disp, gt_disp, occlusion_map, occlusion_map_2):
-        N = tgt_disp.shape[-1]
-        bs, ht, wd = gt_disp.shape
-        ht = ht // 8
-        wd = wd // 8
+    def loss_init(prob, gt_disp, occlusion_map, occlusion_map_2):
         nd = prob.shape[-1]
+        bs, ht, wd = gt_disp.shape
+        gt_disp = torch.clamp(gt_disp, min=0)
+        valid = (gt_disp > 0) & (gt_disp < 320) & (~occlusion_map)
 
-        # downsample occlusion_map and determine the valid ground truth modes
-        gt_disp_clone = gt_disp.clone()
-        gt_disp_clone[occlusion_map] = math.inf  # invalidate occluded pixel disparities
-        gt_disp_clone = rearrange(gt_disp_clone, 'b (h hs) (w ws) -> (b h w) (hs ws)', hs=8, ws=8)
-        dist = torch.abs(tgt_disp[:, :, None] - gt_disp_clone[:, None, :])
-        # a mode regard as non-occlusion if at least two non-occluded pixels close to it at threshold 4
-        nocc_map = torch.sum(dist < 4, dim=-1, keepdim=False) >= 2  # [B*H*W,N]
-        valid = (tgt_disp > 0) & (tgt_disp < 320) & nocc_map
+        ref = torch.arange(0, wd, dtype=torch.int64, device=prob.device).reshape(1, 1, -1).repeat(bs, ht, 1)
+        coord = ref - gt_disp  # corresponding coordinate in the right view
+        valid = torch.logical_and(valid, coord >= 0)  # correspondence should within image boundary
+        coord = torch.clamp(torch.floor(coord), min=0).to(torch.int64)
+        nocc_map_2 = ~occlusion_map_2
+        nocc_map_2 = torch.gather(nocc_map_2, dim=-1, index=coord)  # whether correspondence is occluded
 
-        # downsample occlusion_map_2
-        occlusion_map_2 = rearrange(occlusion_map_2, 'b (h hs) (w ws) -> (b h w) (hs ws)', hs=8, ws=8)
-        nocc_map_2 = torch.sum(occlusion_map_2, dim=-1, keepdim=False) < 40
-        nocc_map_2 = nocc_map_2.reshape(bs, ht, wd)
+        valid = torch.logical_and(valid, nocc_map_2)
 
         # scale ground-truth disparities
-        tgt_disp = tgt_disp / 8
+        tgt_disp = gt_disp / 8
 
-        # each pixel has at most 4 modes, the weight for each mode are [0.5, 0.3, 0.1, 0.1]
-        weights = torch.tensor([0.5, 0.3, 0.1, 0.1], dtype=tgt_disp.dtype, device=tgt_disp.device)
-        weights = weights.view(1, -1).repeat(prob.shape[0], 1)  # [B*H*W,N]
+        weights = torch.ones_like(tgt_disp)
         weights[~valid] = 0
 
-        ref = torch.arange(0, wd, dtype=torch.int64, device=prob.device).reshape(1, 1, -1).repeat(bs, ht, 1).reshape(bs*ht*wd, 1)
+        tgt_disp = rearrange(tgt_disp, 'b (h m) (w n) -> (b h w) (m n)', m=8, n=8)
+        weights = rearrange(weights, 'b (h m) (w n) -> (b h w) (m n)', m=8, n=8)
+        valid = rearrange(valid, 'b (h m) (w n) -> (b h w) (m n)', m=8, n=8)
+
         lower_bound = torch.floor(tgt_disp).to(torch.int64)
         high_bound = lower_bound + 1
         high_prob = tgt_disp - lower_bound
-        lower_bound = torch.clamp(lower_bound, max=nd-1)
-        lower_coord = torch.clamp(ref - lower_bound, min=0)
-        high_bound = torch.clamp(high_bound, max=nd-1)
-        high_coord = torch.clamp(ref - high_bound, min=0)
+        lower_bound = torch.clamp(lower_bound, max=nd - 1)
+        high_bound = torch.clamp(high_bound, max=nd - 1)
 
-        nocc_map_2_lower = torch.gather(nocc_map_2, dim=-1, index=lower_coord.view(bs, ht, -1)).reshape(-1, N)
-        lower_prob = (1 - high_prob) * weights * nocc_map_2_lower
-        nocc_map_2_high = torch.gather(nocc_map_2, dim=-1, index=high_coord.view(bs, ht, -1)).reshape(-1, N)
-        high_prob = high_prob * weights * nocc_map_2_high
+        lower_prob = (1 - high_prob) * weights
+        high_prob = high_prob * weights
 
-        labels = [torch.zeros_like(prob) for _ in range(N)]
-        for i, label in enumerate(labels):
-            label.scatter_(dim=-1, index=high_bound[:, i:i+1], src=high_prob[:, i:i+1])
-            label.scatter_(dim=-1, index=lower_bound[:, i:i+1], src=lower_prob[:, i:i+1])
-        labels = torch.stack(labels, dim=0)
-        label, _ = torch.max(labels, dim=0, keepdim=False)
+        label = torch.zeros_like(prob)
+        label.scatter_reduce_(dim=-1, index=lower_bound, src=lower_prob, reduce="sum")
+        label.scatter_reduce_(dim=-1, index=high_bound, src=high_prob, reduce="sum")
 
         # normalize weights
         normalizer = torch.clamp(torch.sum(label, dim=-1, keepdim=True), min=1e-3)
@@ -440,7 +428,7 @@ class Criterion(nn.Module):
         tgt_disp_mini = tgt_disp_mini.reshape(-1, 4)  # [B*H*W, 4]
 
         losses = self.loss_prop(disp_prop, tgt_disp_mini)
-        losses.update(self.loss_init(prob, tgt_disp_mini, tgt_disp, occlusion_map, occlusion_map_2))
+        losses.update(self.loss_init(prob, tgt_disp, occlusion_map, occlusion_map_2))
         if 'disp_pred' in outputs_without_aux:
             disp_pred = outputs_without_aux['disp_pred'] * 4
             losses.update(self.loss_disp(disp_pred, tgt_disp))
