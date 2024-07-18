@@ -6,7 +6,7 @@ Official PyTorch implementation of paper:
 Tongfan Guan, Chen Wang, Yun-Hui Liu<br/>
 
 ## :new: Updates
-- `[2024/07/18]`: :rocket: [NMRF-Stereo-SwinT](docs/swint.md) ranks first on KITTI 2012 and KITTI 2015-NOC, with the pretrained [Swin-T](https://github.com/SwinTransformer/storage/releases/download/v1.0.0/swin_tiny_patch4_window7_224.pth) as backbone.
+- `[2024/07/18]`: :rocket: [NMRF-Stereo-SwinT](docs/swint.md) ranks first on KITTI 2012 and KITTI 2015-NOC, with the ImageNet pretrained [Swin-T](https://github.com/SwinTransformer/storage/releases/download/v1.0.0/swin_tiny_patch4_window7_224.pth) as backbone.
 
 ## Introduction
 The stereo method of hand-crafted Markov Random Field (MRF) lacks sufficient modeling accuracy compared to end-to-end deep models. While deep learning representations have greatly improved the unary terms of MRF models, the overall accuracy is still severely limited by the hand-crafted pairwise terms and message passing. To address these issues, we propose a neural MRF model, where both potential functions and message passing are designed using data-driven neural networks. Our fully data-driven model is built on the foundation of variational inference theory, to prevent convergence issues and retain stereo MRF's graph inductive bias. To make the inference tractable and scale well to high-resolution images, we also propose a Disparity Proposal Network (DPN) to adaptively prune the search space for every pixel. 
