@@ -26,7 +26,7 @@ def setup_cfg(args):
 
 
 def get_parser():
-    parser = argparse.ArgumentParser(description="SCVFormer demo for builtin configs")
+    parser = argparse.ArgumentParser(description="NMRF demo for builtin configs")
     parser.add_argument(
         "--config-file",
         default="",
