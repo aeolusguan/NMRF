@@ -12,7 +12,7 @@ import cv2
 cv2.setNumThreads(0)
 cv2.ocl.setUseOpenCL(False)
 
-from kernels.downsample.downsample import downsample
+from ops.functions import downsample
 
 TAG_CHAR = np.array([202021.25], np.float32)
 

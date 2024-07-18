@@ -602,7 +602,7 @@ class CSWinNMP(nn.Module):
 
 class Propagation(nn.Module):
     """Label seed propagation"""
-    def __init__(self, embed_dim, cost_group, prop_layer, num_layers, norm=None, return_intermediate=False):
+    def __init__(self, embed_dim, cost_group, layers, norm=None, return_intermediate=False):
         super().__init__()
         self.cost_encoder = nn.Sequential(
             nn.Linear(cost_group*9, embed_dim),
@@ -611,8 +611,7 @@ class Propagation(nn.Module):
         )
         self.proj = nn.Linear(embed_dim+31, embed_dim, bias=False)
         self.embed_dim = embed_dim
-        self.layers = _get_clones(prop_layer, num_layers)
-        self.num_layers = num_layers
+        self.layers = layers
         self.norm = norm
         self.return_intermediate = return_intermediate
 
@@ -980,10 +979,6 @@ class RefinementLayer(nn.Module):
         self.nmp.H, self.nmp.W = ht, wd
         tgt = self.nmp(tgt, abs_encoding=abs_encoding, attn_mask=attn_mask)
         return tgt
-
-
-def _get_clones(module, N):
-    return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
 
 
 def _get_activation_fn(activation):

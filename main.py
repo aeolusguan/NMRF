@@ -18,7 +18,6 @@ import nmrf.utils.dist_utils as comm
 from nmrf.utils.logger import setup_logger
 from nmrf.utils import evaluation
 
-
 DEFAULT_TIMEOUT = timedelta(minutes=30)
 
 
@@ -26,13 +25,13 @@ def get_args_parser():
     parser = argparse.ArgumentParser(
         f"""
         Examples:
-        
+
         Run on single machine:
             $ {sys.argv[0]} --num-gpus 8
-        
+
         Change some config options:
             $ {sys.argv[0]} SOLVER.IMS_PER_BATCH 8
-        
+
         Run on multiple machines:
             (machine 0)$ {sys.argv[0]} --machine-rank 0 --num-machines 2 --dist-url <URL> [--other-flags]
             (machine 1)$ {sys.argv[1]} --machine-rank 1 --num-machines 2 --dist-url <URL> [--other-flags]
@@ -53,12 +52,12 @@ def get_args_parser():
     # PyTorch still may leave orphan processes in multi-gpu training.
     # Therefore we use a deterministic way to obtain port,
     # so that users are aware of orphan processes by seeing the port occupied.
-    port = 2**15 + 2**14 + hash(os.getuid() if sys.platform != "win32" else 1) % 2**14
+    port = 2 ** 15 + 2 ** 14 + hash(os.getuid() if sys.platform != "win32" else 1) % 2 ** 14
     parser.add_argument(
         "--dist-url",
         default="tcp://127.0.0.1:{}".format(port),
         help="initialization URL for pytorch distributed backend. See "
-        "https://pytorch.org/docs/stable/distributed.html for details."
+             "https://pytorch.org/docs/stable/distributed.html for details."
     )
     parser.add_argument(
         "opts",
@@ -186,6 +185,8 @@ def _distributed_worker(
 
 def build_optimizer(model, cfg):
     base_lr = cfg.SOLVER.BASE_LR
+    backbone_lr_decay = cfg.SOLVER.BACKBONE_LR_DECAY
+    backbone_weight_decay = cfg.SOLVER.BACKBONE_WEIGHT_DECAY
     weight_decay_norm = cfg.SOLVER.WEIGHT_DECAY_NORM
     norm_module_types = (
         torch.nn.BatchNorm2d,
@@ -194,6 +195,10 @@ def build_optimizer(model, cfg):
     )
     params = []
     params_norm = []
+    param_backbone_relative_position_bias_table_norm = []
+    param_relative_position_enc_table_norm = []
+    params_backbone = []
+    params_offset = []
     memo = set()
     for module_name, module in model.named_modules():
         for module_param_name, value in module.named_parameters(recurse=False):
@@ -204,15 +209,34 @@ def build_optimizer(model, cfg):
                 continue
             memo.add(value)
 
-            if isinstance(module, norm_module_types) and weight_decay_norm is not None:
+            if f"{module_name}.{module_param_name}".startswith("image_encoder.backbone"):
+                if "relative_position_bias_table" in f"{module_param_name}":
+                    param_backbone_relative_position_bias_table_norm.append(value)
+                else:
+                    params_backbone.append(value)
+            elif "sampling_offsets" in f"{module_name}":
+                params_offset.append(value)
+            elif "relative_position_enc_table" in f"{module_param_name}":
+                param_relative_position_enc_table_norm.append(value)
+            elif isinstance(module, norm_module_types) and weight_decay_norm is not None:
                 params_norm.append(value)
             else:
                 params.append(value)
     ret = []
     if len(params) > 0:
         ret.append({"params": params, "lr": base_lr})
+    if len(params_offset) > 0:
+        ret.append({"params": params_offset, "lr": base_lr * 0.1})
     if len(params_norm) > 0:
         ret.append({"params": params_norm, "lr": base_lr, "weight_decay": weight_decay_norm})
+    if len(params_backbone) > 0:
+        ret.append(
+            {"params": params_backbone, "lr": base_lr * backbone_lr_decay, "weight_decay": backbone_weight_decay})
+    if len(param_backbone_relative_position_bias_table_norm) > 0:
+        ret.append({"params": param_backbone_relative_position_bias_table_norm, "lr": base_lr * backbone_lr_decay,
+                    "weight_decay": 0.})
+    if len(param_relative_position_enc_table_norm) > 0:
+        ret.append({"params": param_relative_position_enc_table_norm, "lr": base_lr, "weight_decay": 0.})
     adamw_args = {
         "params": ret,
         "weight_decay": cfg.SOLVER.WEIGHT_DECAY
@@ -318,7 +342,9 @@ def main(args):
     num_params = sum(p.numel() for p in model_without_ddp.parameters())
     logger = logging.getLogger("nmrf")
     logger.info('Number of params:' + str(num_params))
-    logger.info("params:\n"+json.dumps({n: p.numel() for n, p in model_without_ddp.named_parameters() if p.requires_grad}, indent=2))
+    logger.info(
+        "params:\n" + json.dumps({n: p.numel() for n, p in model_without_ddp.named_parameters() if p.requires_grad},
+                                 indent=2))
 
     optimizer = build_optimizer(model_without_ddp, cfg)
 

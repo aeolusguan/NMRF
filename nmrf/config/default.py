@@ -27,8 +27,12 @@ _CN.VERSION = 2
 # Model
 # ---------------------------------------------------------------------------- #
 _CN.BACKBONE = CN()
+_CN.BACKBONE.MODEL_TYPE = "resnet"
 _CN.BACKBONE.NORM_FN = "instance"
 _CN.BACKBONE.OUT_CHANNELS = 256
+_CN.BACKBONE.WEIGHT_URL = ""
+_CN.BACKBONE.DROP_PATH = 0.0
+_CN.BACKBONE.COMPAT = True
 
 _CN.DPN = CN()
 _CN.DPN.MAX_DISP = 320
@@ -76,6 +80,7 @@ _CN.DATASETS.SPATIAL_SCALE = [-0.2, 0.4]
 _CN.DATASETS.YJITTER = False
 # Image size for training
 _CN.DATASETS.CROP_SIZE = [384, 768]
+_CN.DATASETS.DIVIS_BY = 8
 
 # ---------------------------------------------------------------------------- #
 # Dataset and data augmentation
@@ -93,11 +98,13 @@ _CN.SOLVER.MAX_ITER = 300000
 
 _CN.SOLVER.BASE_LR = 0.0005
 _CN.SOLVER.BASE_LR_END = 0.0
+_CN.SOLVER.BACKBONE_LR_DECAY = 0.1
 
 _CN.SOLVER.WEIGHT_DECAY = 0.00001
 # The weight decay that's applied to parameters of normalization layers
 # (typically the affine transformation)
 _CN.SOLVER.WEIGHT_DECAY_NORM = 0.00001
+_CN.SOLVER.BACKBONE_WEIGHT_DECAY = 0.00001
 
 # Save a checkpoint after every this number of iterations
 _CN.SOLVER.CHECKPOINT_PERIOD = 100000

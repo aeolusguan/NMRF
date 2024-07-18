@@ -292,7 +292,7 @@ def inference_context(model):
 class DispEvaluator(DatasetEvaluator):
     """Evaluate disparity accuracy using metrics."""
 
-    def __init__(self, thres, only_valid, max_disp=None, eval_prop=True):
+    def __init__(self, thres, only_valid, max_disp=None, eval_prop=True, divis_by=8):
         """
         Args:
             thres (list[str] or None): threshold for outlier
@@ -308,6 +308,7 @@ class DispEvaluator(DatasetEvaluator):
         self._thres = thres
         self._only_valid = only_valid
         self._eval_prop = eval_prop
+        self._divis_by = divis_by
 
     def reset(self):
         self._epe = []
@@ -363,6 +364,13 @@ class DispEvaluator(DatasetEvaluator):
                 disp_gt_clone = disp_gt.clone()
                 disp_gt_clone[~valid_gt] = 0
                 mini_disp_gt = frame_utils.downsample_disp(disp_gt_clone[None], superpixel_label[None])[0]
+                im_h, im_w = disp_gt.shape[:2]
+                _im_h = int((im_h + self._divis_by - 1) // self._divis_by * self._divis_by // 8)
+                _im_w = int((im_w + self._divis_by - 1) // self._divis_by * self._divis_by // 8)
+                ht, wd = mini_disp_gt.shape[:2]
+                _, num_proposals = proposal.shape
+                proposal = proposal.reshape(_im_h, _im_w, num_proposals)
+                proposal = proposal[:ht, :wd, :].reshape(-1, num_proposals)
                 mini_disp_gt = mini_disp_gt.flatten(end_dim=1)
                 epe = torch.cdist(mini_disp_gt[..., None], proposal[..., None], p=1)
                 epe[mini_disp_gt == 0, :] = 1e6

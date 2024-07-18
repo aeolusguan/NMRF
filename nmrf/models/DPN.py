@@ -48,12 +48,18 @@ class DPN(nn.Module):
             nn.ReLU(inplace=True),
             nn.Conv2d(128, context_dim, 1, 1, 0, bias=False))
 
-        prop_layer = PropagationLayer(prop_embed_dim, mlp_ratio=mlp_ratio, context_dim=context_dim,
-                                      split_size=split_size, n_heads=prop_n_heads, activation=activation,
-                                      attn_drop=attn_drop, proj_drop=proj_drop, drop_path=drop_path, dropout=dropout,
-                                      normalize_before=normalize_before)
+        # stochastic depth
+        dpr = [x.item() for x in torch.linspace(0, drop_path, num_prop_layers)]
+        prop_layers = nn.ModuleList([
+            PropagationLayer(
+                prop_embed_dim, mlp_ratio=mlp_ratio, context_dim=context_dim,
+                split_size=split_size, n_heads=prop_n_heads, activation=activation,
+                attn_drop=attn_drop, proj_drop=proj_drop, drop_path=dpr[i], dropout=dropout,
+                normalize_before=normalize_before)
+            for i in range(num_prop_layers)]
+        )
         prop_norm = nn.LayerNorm(prop_embed_dim)
-        self.propagation = Propagation(prop_embed_dim, cost_group, prop_layer=prop_layer, num_layers=num_prop_layers,
+        self.propagation = Propagation(prop_embed_dim, cost_group, layers=prop_layers,
                                        norm=prop_norm, return_intermediate=False)
 
         self.prop_head = MLP(prop_embed_dim, prop_embed_dim, 1, 3)

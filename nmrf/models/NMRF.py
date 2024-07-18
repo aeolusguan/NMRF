@@ -9,7 +9,7 @@ from timm.models.layers import trunc_normal_
 from nmrf.utils.frame_utils import InputPadder, downsample_disp
 from nmrf.config import configurable
 from nmrf.models.matcher import bf_match
-from nmrf.models.backbone import Backbone
+from nmrf.models.backbone import create_backbone
 from nmrf.models.DPN import DPN
 from nmrf.models.submodule import build_correlation_volume
 from nmrf.models.NMP import (
@@ -43,7 +43,9 @@ class NMRF(nn.Module):
                  return_intermediate=False,
                  normalize_before=False,
                  activation="gelu",
-                 aux_loss=False):
+                 aux_loss=False,
+                 divis_by=8,
+                 compat=True):
         """
         aux_loss: True if auxiliary intermediate losses (losses at each encoder/decoder layer)
         """
@@ -51,6 +53,7 @@ class NMRF(nn.Module):
         self.num_proposals = num_proposals
         self.max_disp = max_disp
         self.aux_loss = aux_loss
+        self.divis_by = divis_by
 
         feat_dim = backbone.output_dim
         self.concatconv = nn.Sequential(
@@ -64,12 +67,14 @@ class NMRF(nn.Module):
             nn.ReLU(inplace=True),
             nn.Conv2d(128, 256, 1, 1, 0, bias=False))
 
+        # stochastic depth
+        dpr = [x.item() for x in torch.linspace(0, drop_path, num_infer_layers)]
         infer_layers = nn.ModuleList([
             InferenceLayer(
                 infer_embed_dim, mlp_ratio=mlp_ratio, window_size=window_size,
                 shift_size=0 if i % 2 == 0 else window_size // 2, n_heads=infer_n_heads,
                 activation=activation,
-                attn_drop=attn_drop, proj_drop=proj_drop, drop_path=drop_path, dropout=dropout,
+                attn_drop=attn_drop, proj_drop=proj_drop, drop_path=dpr[i], dropout=dropout,
                 normalize_before=normalize_before
             )
             for i in range(num_infer_layers)]
@@ -86,12 +91,13 @@ class NMRF(nn.Module):
         self.with_refinement = with_refinement
         if self.with_refinement:
             # refinement
+            dpr = [x.item() for x in torch.linspace(0, drop_path, num_refine_layers)]
             refine_layers = nn.ModuleList([
                 RefinementLayer(
                     infer_embed_dim, mlp_ratio=mlp_ratio, window_size=refine_window_size,
                     shift_size=0 if i % 2 == 0 else refine_window_size // 2, n_heads=infer_n_heads,
                     activation=activation,
-                    attn_drop=attn_drop, proj_drop=proj_drop, drop_path=drop_path, dropout=dropout,
+                    attn_drop=attn_drop, proj_drop=proj_drop, drop_path=dpr[i], dropout=dropout,
                     normalize_before=normalize_before,
                 )
                 for i in range(num_refine_layers)]
@@ -101,10 +107,13 @@ class NMRF(nn.Module):
                                        return_intermediate=return_intermediate)
             self.refine_head = MLP(infer_embed_dim, infer_embed_dim, 4 * 4, 3)
 
-
-
         self.dpn = dpn
-        self.backbone = backbone
+        # backward compatible with the models released at CVPR'24
+        self.compat = compat
+        if compat:
+            self.backbone = backbone
+        else:
+            self.image_encoder = backbone
 
         # to keep track of which device the nn.Module is on
         self.register_buffer("device_indicator_tensor", torch.empty(0))
@@ -116,13 +125,8 @@ class NMRF(nn.Module):
 
     @classmethod
     def from_config(cls, cfg):
-        if cfg.BACKBONE.NORM_FN == 'instance':
-            norm_layer = nn.InstanceNorm2d
-        elif cfg.BACKBONE.NORM_FN == 'batch':
-            norm_layer = nn.BatchNorm2d
-        else:
-            raise ValueError(f'Invalid backbone normalization type: {cfg.BACKBONE.NORM_FN}')
-        backbone = Backbone(cfg.BACKBONE.OUT_CHANNELS, norm_layer)
+        # backbone
+        backbone = create_backbone(cfg)
 
         # disparity proposal network
         dpn = DPN(cfg)
@@ -146,6 +150,8 @@ class NMRF(nn.Module):
             "dropout": cfg.NMP.DROPOUT,
             "normalize_before": cfg.NMP.NORMALIZE_BEFORE,
             "return_intermediate": cfg.NMP.RETURN_INTERMEDIATE,
+            "divis_by": cfg.DATASETS.DIVIS_BY,
+            "compat": cfg.BACKBONE.COMPAT,
         }
 
     def _init_weights(self, m):
@@ -168,7 +174,10 @@ class NMRF(nn.Module):
 
     def extract_feature(self, img1, img2):
         img_batch = torch.cat((img1, img2), dim=0)  # [2B, C, H, W]
-        features = self.backbone(img_batch)  # list of [2B, C, H, W], resolution from high to low
+        if self.compat:
+            features = self.backbone(img_batch)
+        else:
+            features = self.image_encoder(img_batch)  # list of [2B, C, H, W], resolution from high to low
 
         # reverse resolution from low to high
         features = features[::-1]
@@ -190,13 +199,12 @@ class NMRF(nn.Module):
             - "aux_outputs": Optional, only returned when auxiliary losses are activated. It is a list of
                              dictionaries containing the four above keys for each intermediate layer.
         """
-        # Following https://github.com/princeton-vl/RAFT
-        image1 = 2 * (sample['img1'].to(self.device) / 255.0) - 1.0
-        image2 = 2 * (sample['img2'].to(self.device) / 255.0) - 1.0
+        image1 = sample['img1'].to(self.device)
+        image2 = sample['img2'].to(self.device)
 
         # We assume the input padding is not needed during training by setting adequate crop size
         if not self.training:
-            padder = InputPadder(image1.shape, mode='proposal', divis_by=8)
+            padder = InputPadder(image1.shape, mode='proposal', divis_by=self.divis_by)
             image1, image2 = padder.pad(image1, image2)
         fmap1_list, fmap2_list = self.extract_feature(image1, image2)
         cost_volume = build_correlation_volume(fmap1_list[0], fmap2_list[0], self.max_disp // 8, self.dpn.cost_group)  # [B,G,D,H,W]
