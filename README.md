@@ -1,5 +1,8 @@
 # NMRF-Stereo
 
+[![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/neural-markov-random-field-for-stereo/stereo-disparity-estimation-on-kitti-2012)](https://paperswithcode.com/sota/stereo-disparity-estimation-on-kitti-2012?p=neural-markov-random-field-for-stereo)
+[![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/neural-markov-random-field-for-stereo/stereo-disparity-estimation-on-kitti-2015)](https://paperswithcode.com/sota/stereo-disparity-estimation-on-kitti-2015?p=neural-markov-random-field-for-stereo)
+
 Official PyTorch implementation of paper:
 
 [**Neural Markov Random Field for Stereo Matching**](https://arxiv.org/abs/2403.11193), **CVPR 2024**<br/>
