@@ -58,8 +58,10 @@ class StereoDataset(data.Dataset):
             img2 = frame_utils.read_gen(self.image_list[index][1])
             img1 = np.array(img1).astype(np.uint8)[..., :3]
             img2 = np.array(img2).astype(np.uint8)[..., :3]
+            gray = cv2.cvtColor(img1, cv2.COLOR_RGB2GRAY) / 255.0
             sample['img1'] = torch.from_numpy(img1).permute(2, 0, 1).float()
             sample['img2'] = torch.from_numpy(img2).permute(2, 0, 1).float()
+            sample['gray'] = torch.from_numpy(gray).float()
             sample['meta'] = self.extra_info[index]
             return sample
 
@@ -107,17 +109,19 @@ class StereoDataset(data.Dataset):
         else:
             img1 = img1[..., :3]
             img2 = img2[..., :3]
+        gray = cv2.cvtColor(img1, cv2.COLOR_RGB2GRAY) / 255.0
 
         if self.augmentor is not None:
             if self.sparse:
-                img1, img2, flow, super_pixel_label, occlusion_map, occlusion_map_2, valid = self.augmentor(img1, img2, flow, super_pixel_label, occlusion_map, valid)
+                img1, img2, flow, super_pixel_label, occlusion_map, occlusion_map_2, valid, gray = self.augmentor(img1, img2, flow, super_pixel_label, occlusion_map, valid, gray)
             else:
-                img1, img2, flow, super_pixel_label, occlusion_map, occlusion_map_2 = self.augmentor(img1, img2, flow, super_pixel_label, occlusion_map)
+                img1, img2, flow, super_pixel_label, occlusion_map, occlusion_map_2, gray = self.augmentor(img1, img2, flow, super_pixel_label, occlusion_map, gray)
         else:
             occlusion_map_2 = np.zeros(img1.shape[:2], dtype=bool)
 
         sample['img1'] = torch.from_numpy(img1).permute(2, 0, 1).float()
         sample['img2'] = torch.from_numpy(img2).permute(2, 0, 1).float()
+        sample['gray'] = torch.from_numpy(gray).float()
         sample['disp'] = torch.from_numpy(flow).permute(2, 0, 1).float()[0]
 
         if self.sparse:
