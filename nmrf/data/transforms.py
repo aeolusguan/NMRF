@@ -85,7 +85,7 @@ class FlowAugmentor:
 
         return img1, img2, occlusion_map_2
 
-    def spatial_transform(self, img1, img2, flow, label, occlusion_map, occlusion_map_2):
+    def spatial_transform(self, img1, img2, flow, label, occlusion_map, occlusion_map_2, gray):
         # randomly sample scale
         ht, wd = img1.shape[:2]
         min_scale = np.maximum(
@@ -106,6 +106,7 @@ class FlowAugmentor:
             # rescale the images
             img1 = cv2.resize(img1, None, fx=scale_x, fy=scale_y, interpolation=cv2.INTER_LINEAR)
             img2 = cv2.resize(img2, None, fx=scale_x, fy=scale_y, interpolation=cv2.INTER_LINEAR)
+            gray = cv2.resize(gray, None, fx=scale_x, fy=scale_y, interpolation=cv2.INTER_LINEAR)
             label = cv2.resize(label, None, fx=scale_x, fy=scale_y, interpolation=cv2.INTER_NEAREST)
             occlusion_map = cv2.resize(occlusion_map.astype(np.float32), None, fx=scale_x, fy=scale_y, interpolation=cv2.INTER_NEAREST) > 0.5
             occlusion_map_2 = cv2.resize(occlusion_map_2.astype(np.float32), None, fx=scale_x, fy=scale_y, interpolation=cv2.INTER_NEAREST) > 0.5
@@ -116,6 +117,7 @@ class FlowAugmentor:
             if np.random.rand() < self.h_flip_prob and self.do_flip == 'hf':  # h-flip
                 img1 = img1[:, ::-1]
                 img2 = img2[:, ::-1]
+                gray = gray[:, ::-1]
                 flow = flow[:, ::-1] * [-1.0, 1.0]
                 label = label[:, ::-1]
                 occlusion_map = occlusion_map[:, ::-1]
@@ -126,10 +128,12 @@ class FlowAugmentor:
                 tmp = img1[:, ::-1]
                 img1 = img2[:, ::-1]
                 img2 = tmp
+                # TODO support gray h-flip for stereo
 
             if np.random.rand() < self.v_flip_prob and self.do_flip == 'v':  # v-flip
                 img1 = img1[::-1, :]
                 img2 = img2[::-1, :]
+                gray = gray[::-1, :]
                 flow = flow[::-1, :] * [1.0, -1.0]
                 label = label[::-1, :]
                 occlusion_map = occlusion_map[::-1, :]
@@ -142,6 +146,7 @@ class FlowAugmentor:
             y1 = y0 + np.random.randint(-2, 2 + 1)
             img1 = img1[y0:y0 + self.crop_size[0], x0:x0 + self.crop_size[1]]
             img2 = img2[y1:y1 + self.crop_size[0], x0:x0 + self.crop_size[1]]
+            gray = gray[y0:y0 + self.crop_size[0], x0:x0 + self.crop_size[1]]
             flow = flow[y0:y0 + self.crop_size[0], x0:x0 + self.crop_size[1]]
             occlusion_map = occlusion_map[y0:y0 + self.crop_size[0], x0:x0 + self.crop_size[1]]
             occlusion_map_2 = occlusion_map_2[y1:y1 + self.crop_size[0], x0:x0 + self.crop_size[1]]
@@ -153,17 +158,18 @@ class FlowAugmentor:
 
             img1 = img1[y0:y0 + self.crop_size[0], x0:x0 + self.crop_size[1]]
             img2 = img2[y0:y0 + self.crop_size[0], x0:x0 + self.crop_size[1]]
+            gray = gray[y0:y0 + self.crop_size[0], x0:x0 + self.crop_size[1]]
             flow = flow[y0:y0 + self.crop_size[0], x0:x0 + self.crop_size[1]]
             occlusion_map = occlusion_map[y0:y0 + self.crop_size[0], x0:x0 + self.crop_size[1]]
             occlusion_map_2 = occlusion_map_2[y0:y0 + self.crop_size[0], x0:x0 + self.crop_size[1]]
             label = label[y0:y0 + self.crop_size[0], x0:x0 + self.crop_size[1]]
 
-        return img1, img2, flow, label, occlusion_map, occlusion_map_2
+        return img1, img2, flow, label, occlusion_map, occlusion_map_2, gray
 
-    def __call__(self, img1, img2, flow, label, occlusion_map):
+    def __call__(self, img1, img2, flow, label, occlusion_map, gray):
         img1, img2 = self.color_transform(img1, img2)
         img1, img2, occlusion_map_2 = self.eraser_transform(img1, img2)
-        img1, img2, flow, label, occlusion_map, occlusion_map_2 = self.spatial_transform(img1, img2, flow, label, occlusion_map, occlusion_map_2)
+        img1, img2, flow, label, occlusion_map, occlusion_map_2, gray = self.spatial_transform(img1, img2, flow, label, occlusion_map, occlusion_map_2, gray)
 
         img1 = np.ascontiguousarray(img1)
         img2 = np.ascontiguousarray(img2)
@@ -171,8 +177,9 @@ class FlowAugmentor:
         label = np.ascontiguousarray(label)
         occlusion_map = np.ascontiguousarray(occlusion_map)
         occlusion_map_2 = np.ascontiguousarray(occlusion_map_2)
+        gray = np.ascontiguousarray(gray)
 
-        return img1, img2, flow, label, occlusion_map, occlusion_map_2
+        return img1, img2, flow, label, occlusion_map, occlusion_map_2, gray
 
 
 class SparseFlowAugmentor:
@@ -250,7 +257,7 @@ class SparseFlowAugmentor:
 
         return flow_img, valid_img
 
-    def spatial_transform(self, img1, img2, flow, label, occlusion_map, occlusion_map_2, valid):
+    def spatial_transform(self, img1, img2, flow, label, occlusion_map, occlusion_map_2, valid, gray):
         # randomly sample scale
 
         ht, wd = img1.shape[:2]
@@ -266,6 +273,7 @@ class SparseFlowAugmentor:
             # rescale the images
             img1 = cv2.resize(img1, None, fx=scale_x, fy=scale_y, interpolation=cv2.INTER_LINEAR)
             img2 = cv2.resize(img2, None, fx=scale_x, fy=scale_y, interpolation=cv2.INTER_LINEAR)
+            gray = cv2.resize(gray, None, fx=scale_x, fy=scale_y, interpolation=cv2.INTER_LINEAR)
             occlusion_map = cv2.resize(occlusion_map.astype(np.float32), None, fx=scale_x, fy=scale_y, interpolation=cv2.INTER_NEAREST) > 0.5
             occlusion_map_2 = cv2.resize(occlusion_map_2.astype(np.float32), None, fx=scale_x, fy=scale_y, interpolation=cv2.INTER_NEAREST) > 0.5
             label = cv2.resize(label, None, fx=scale_x, fy=scale_y, interpolation=cv2.INTER_NEAREST)
@@ -275,6 +283,7 @@ class SparseFlowAugmentor:
             if np.random.rand() < self.h_flip_prob and self.do_flip == 'hf': # h-flip
                 img1 = img1[:, ::-1]
                 img2 = img2[:, ::-1]
+                gray = gray[:, ::-1]
                 flow = flow[:, ::-1] * [-1.0, 1.0]
                 label = label[:, ::-1]
                 occlusion_map = occlusion_map[:, ::-1]
@@ -286,10 +295,12 @@ class SparseFlowAugmentor:
                 tmp = img1[:, ::-1]
                 img1 = img2[:, ::-1]
                 img2 = tmp
+                # TODO support gray for h-flip
 
             if np.random.rand() < self.v_flip_prob and self.do_flip == 'v': # v-flip
                 img1 = img1[::-1, :]
                 img2 = img2[::-1, :]
+                gray = gray[::-1, :]
                 flow = flow[::-1, :] * [1.0, -1.0]
                 label = label[::-1, :]
                 occlusion_map = occlusion_map[::-1, :]
@@ -307,18 +318,19 @@ class SparseFlowAugmentor:
 
         img1 = img1[y0:y0+self.crop_size[0], x0:x0+self.crop_size[1]]
         img2 = img2[y0:y0+self.crop_size[0], x0:x0+self.crop_size[1]]
+        gray = gray[y0:y0 + self.crop_size[0], x0:x0 + self.crop_size[1]]
         flow = flow[y0:y0+self.crop_size[0], x0:x0+self.crop_size[1]]
         valid = valid[y0:y0+self.crop_size[0], x0:x0+self.crop_size[1]]
         label = label[y0:y0+self.crop_size[0], x0:x0+self.crop_size[1]]
         occlusion_map = occlusion_map[y0:y0+self.crop_size[0], x0:x0+self.crop_size[1]]
         occlusion_map_2 = occlusion_map_2[y0:y0+self.crop_size[0], x0:x0+self.crop_size[1]]
 
-        return img1, img2, flow, label, occlusion_map, occlusion_map_2, valid > 0
+        return img1, img2, flow, label, occlusion_map, occlusion_map_2, valid > 0, gray
 
-    def __call__(self, img1, img2, flow, label, occlusion_map, valid):
+    def __call__(self, img1, img2, flow, label, occlusion_map, valid, gray):
         img1, img2 = self.color_transform(img1, img2)
         img1, img2, occlusion_map_2 = self.eraser_transform(img1, img2)
-        img1, img2, flow, label, occlusion_map, occlusion_map_2, valid = self.spatial_transform(img1, img2, flow, label, occlusion_map, occlusion_map_2, valid)
+        img1, img2, flow, label, occlusion_map, occlusion_map_2, valid, gray = self.spatial_transform(img1, img2, flow, label, occlusion_map, occlusion_map_2, valid, gray)
 
         img1 = np.ascontiguousarray(img1)
         img2 = np.ascontiguousarray(img2)
@@ -327,5 +339,6 @@ class SparseFlowAugmentor:
         valid = np.ascontiguousarray(valid)
         occlusion_map = np.ascontiguousarray(occlusion_map)
         occlusion_map_2 = np.ascontiguousarray(occlusion_map_2)
+        gray = np.ascontiguousarray(gray)
 
-        return img1, img2, flow, label, occlusion_map, occlusion_map_2, valid
+        return img1, img2, flow, label, occlusion_map, occlusion_map_2, valid, gray

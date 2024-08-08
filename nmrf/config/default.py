@@ -134,6 +134,12 @@ _CN.SOLVER.MAX_DISP = 192
 # Loss type used in cost aggregation and refinement
 _CN.SOLVER.LOSS_TYPE = "L1"
 
+# Symbolic knowledge distillation
+_CN.SOLVER.USE_DISTILL = False
+_CN.SOLVER.DISTILLATION_ALPHA1_RANGE = (0.01, 1.0)
+_CN.SOLVER.DISTILLATION_ALPHA2 = 0.01
+_CN.SOLVER.DISTILLATION_HUBER_DELTA = 0.02
+
 # ---------------------------------------------------------------------------- #
 # Specific test options
 # ---------------------------------------------------------------------------- #

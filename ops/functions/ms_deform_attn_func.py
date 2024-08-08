@@ -8,7 +8,7 @@
 
 from __future__ import absolute_import, division, print_function
 
-import MultiScaleDeformableAttention as MSDA
+import NeSyStereo as MSDA
 import torch
 import torch.nn.functional as F
 from torch.autograd import Function

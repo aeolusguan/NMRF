@@ -1,5 +1,3 @@
-import math
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -19,6 +17,7 @@ from nmrf.models.NMP import (
     RefinementLayer,
     Refinement,
 )
+from ops.modules import PDTGVSolver, build_diffusion_tensor
 
 
 class NMRF(nn.Module):
@@ -45,7 +44,9 @@ class NMRF(nn.Module):
                  activation="gelu",
                  aux_loss=False,
                  divis_by=8,
-                 compat=True):
+                 compat=True,
+                 use_distill=False,
+                 pd_solver=None):
         """
         aux_loss: True if auxiliary intermediate losses (losses at each encoder/decoder layer)
         """
@@ -54,6 +55,7 @@ class NMRF(nn.Module):
         self.max_disp = max_disp
         self.aux_loss = aux_loss
         self.divis_by = divis_by
+        self.use_distill = use_distill
 
         feat_dim = backbone.output_dim
         self.concatconv = nn.Sequential(
@@ -104,8 +106,11 @@ class NMRF(nn.Module):
             )
             refine_norm = nn.LayerNorm(infer_embed_dim)
             self.refinement = Refinement(32, infer_embed_dim, layers=refine_layers, norm=refine_norm,
-                                       return_intermediate=return_intermediate)
+                                         return_intermediate=return_intermediate)
             self.refine_head = MLP(infer_embed_dim, infer_embed_dim, 4 * 4, 3)
+            if self.use_distill:
+                self.certainty_head = MLP(infer_embed_dim, infer_embed_dim, 4 * 4 * 2, 3)
+                self.pd_solver = pd_solver
 
         self.dpn = dpn
         # backward compatible with the models released at CVPR'24
@@ -131,6 +136,16 @@ class NMRF(nn.Module):
         # disparity proposal network
         dpn = DPN(cfg)
 
+        # symbolic knowledge distillation
+        if cfg.SOLVER.USE_DISTILL:
+            pd_solver = PDTGVSolver(
+                alpha1_range=cfg.SOLVER.DISTILLATION_ALPHA1_RANGE,
+                alpha2=cfg.SOLVER.DISTILLATION_ALPHA2,
+                huber_delta=cfg.SOLVER.DISTILLATION_HUBER_DELTA,
+            )
+        else:
+            pd_solver = None
+
         return {
             "backbone": backbone,
             "dpn": dpn,
@@ -152,6 +167,8 @@ class NMRF(nn.Module):
             "return_intermediate": cfg.NMP.RETURN_INTERMEDIATE,
             "divis_by": cfg.DATASETS.DIVIS_BY,
             "compat": cfg.BACKBONE.COMPAT,
+            "use_distill": cfg.SOLVER.USE_DISTILL,
+            "pd_solver": pd_solver,
         }
 
     def _init_weights(self, m):
@@ -226,6 +243,8 @@ class NMRF(nn.Module):
         mask = rearrange(mask, 'a (b h w) n (hs ws) -> a b (h hs) (w ws) n', h=ht, w=wd, hs=8)
 
         disp_pred = None
+        w_and_log_b = None
+        out_full = {}  # full resolution output, all in BCHW format
         if self.with_refinement:
             # refinement
             _, indices = torch.max(mask[-1], dim=-1, keepdim=True)
@@ -242,38 +261,77 @@ class NMRF(nn.Module):
             bs, _, ht, wd = fmap1.shape
             disp_delta = rearrange(disp_delta, 'a (b h w) p -> a b h w p', h=ht, w=wd)
             disp_pred = F.relu(disp_curr[None].unsqueeze(-1) + disp_delta)
-            disp_pred = rearrange(disp_pred, 'a b h w (hs ws) -> a b (h hs) (w ws)', hs=4).contiguous()
+            disp_pred = rearrange(disp_pred, 'a b h w (hs ws) -> a b (h hs) (w ws)', hs=4).contiguous() * 4
+
+            if self.use_distill:
+                w_and_log_b = self.certainty_head(tgt)
+                w_and_log_b = rearrange(w_and_log_b, 'a (b h w) (hs ws c) -> a b c (h hs) (w ws)',
+                                        h=ht, w=wd, hs=4, ws=4)
+                disp_pd, normal = self.distill(sample, disp_pred, w_and_log_b)
+                out_full['w_and_log_b'] = w_and_log_b[-1]
+                out_full['disp_pd'] = disp_pd[-1]
+                out_full['normal'] = normal[-1].permute(0, 3, 1, 2)
 
         if disp_pred is not None:
-            disp = disp_pred[-1] * 4
+            out_full['disp'] = disp_pred[-1]
         else:
             _, indices = torch.max(mask[-1], dim=-1, keepdim=True)
-            disp = torch.gather(coarse_disp[-1], dim=-1, index=indices).squeeze(-1) * 8  # [B,H,W]
+            out_full['disp'] = torch.gather(coarse_disp[-1], dim=-1, index=indices).squeeze(-1) * 8  # [B,H,W]
 
-        if not self.training:
-            disp = padder.unpad(disp.unsqueeze(1)).squeeze(1)
-
+        # keep track of DPN results
         bs = image1.shape[0]
         label_seeds = label_seeds.reshape(bs, -1, self.num_proposals)
         proposal = labels[-1].reshape(bs, -1, self.num_proposals)
-        out = {'proposal': proposal, 'prob': prob, 'initial_proposal': label_seeds, 'disp': disp}
+        out = {'proposal': proposal, 'prob': prob, 'initial_proposal': label_seeds}
+
+        # in inference phase, early return
+        if not self.training:
+            res = {}
+            for k, v in out_full.items():
+                if v.dim() != 4:
+                    res[k] = padder.unpad(v.unsqueeze(1)).squeeze(1)
+            out.update(res)
+            return out
+
+        # extra results for training
+        out.update(out_full)
         if disp_pred is not None:
             out['disp_pred'] = disp_pred[-1]
-        if self.aux_loss and self.training:
-            out['aux_outputs'] = self._set_aux_loss(disp_pred, coarse_disp, mask)
+        if self.aux_loss:
+            if not self.use_distill:
+                w_and_log_b = None
+                disp_pd = None
+            out['aux_outputs'] = self._set_aux_loss(disp_pred, coarse_disp, mask, w_and_log_b, disp_pd)
 
         return out
 
     @torch.jit.unused
-    def _set_aux_loss(self, disp_pred, coarse_disp, logits_pred):
+    def _set_aux_loss(self, disp_pred, coarse_disp, logits_pred, w_and_log_b, disp_pd):
         res = []
         for coarse_disp_i, logits_pred_i in zip(coarse_disp, logits_pred):
-            res.append(dict(disp_pred=coarse_disp_i, logits_pred=logits_pred_i))
+            res.append(dict(disp_pred=coarse_disp_i * 8, logits_pred=logits_pred_i))
         if disp_pred is None:
             return res
-        for disp_pred_i in disp_pred[:-1]:
-            res.append(dict(disp_pred=disp_pred_i))
+        if w_and_log_b is not None:
+            for disp_pred_i, w_and_log_b_i, disp_pd_i in zip(disp_pred[:-1], w_and_log_b[:-1], disp_pd[:-1]):
+                res.append(dict(disp_pred=disp_pred_i, w_and_log_b=w_and_log_b_i, disp_pd=disp_pd_i))
+        else:
+            for disp_pred_i in disp_pred[:-1]:
+                res.append(dict(disp_pred=disp_pred_i))
         return res
+
+    def distill(self, sample, disp_pred, w_and_log_b):
+        gray = sample['gray'].to(self.device)
+        if not self.training:
+            padder = InputPadder(gray.shape, mode='proposal', divis_by=self.divis_by)
+            gray = padder.pad(gray.unsqueeze(1))[0].squeeze(1)
+        diffusion_tensor = build_diffusion_tensor(gray)
+        disp_opts, normals = [], []
+        for disp_pred_i, w_and_log_b_i in zip(disp_pred, w_and_log_b):
+            disp_opt, normal = self.pd_solver(20, disp_pred_i, diffusion_tensor, w_and_log_b_i)
+            disp_opts.append(disp_opt)
+            normals.append(normal)
+        return disp_opts, normals
 
 
 class Criterion(nn.Module):
@@ -409,6 +467,20 @@ class Criterion(nn.Module):
             loss = F.smooth_l1_loss(disp_pred, disp_pred.detach(), reduction='mean')
         return {"loss_disp": loss}
 
+    def loss_disp_nf(self, disp_pred, disp_gt, w_and_log_b, disp_pd):
+        mask = (disp_gt > 0) & (disp_gt < self.max_disp)
+        log_b = w_and_log_b[:, 1].clamp(min=0, max=10)
+        if torch.any(mask):
+            # term2: [B,H,W]
+            term2 = self.loss_fn(disp_pred, disp_gt, reduction='none') * torch.exp(-log_b)
+            # term1: [B,H,W]
+            term1 = log_b
+            nf_loss = term1 + term2
+            loss = torch.mean(nf_loss[mask]) + self.loss_fn(disp_pd[mask], disp_gt[mask], reduction='mean')
+        else:
+            loss = F.smooth_l1_loss(disp_pred, disp_pred.detach(), reduction='mean')
+        return {"loss_disp": loss}
+
     def forward(self, outputs, targets, log=True):
         """This performs the loss computation.
         outputs: dict of tensors, see the output specification of the model for the format
@@ -432,14 +504,18 @@ class Criterion(nn.Module):
         occlusion_map_2 = targets['occlusion_map_2'].to(device)
         label = targets['super_pixel_label'].to(device)
         tgt_disp_mini = downsample_disp(tgt_disp, label)
-        bs, ht = tgt_disp_mini.shape[:2]
         tgt_disp_mini = tgt_disp_mini.reshape(-1, 4)  # [B*H*W, 4]
 
         losses = self.loss_prop(disp_prop, tgt_disp_mini)
         losses.update(self.loss_init(prob, tgt_disp, occlusion_map, occlusion_map_2))
         if 'disp_pred' in outputs_without_aux:
-            disp_pred = outputs_without_aux['disp_pred'] * 4
-            losses.update(self.loss_disp(disp_pred, tgt_disp))
+            disp_pred = outputs_without_aux['disp_pred']
+            if 'w_and_log_b' in outputs_without_aux:
+                w_and_log_b = outputs_without_aux['w_and_log_b']
+                disp_pd = outputs_without_aux['disp_pd']
+                losses.update(self.loss_disp_nf(disp_pred, tgt_disp, w_and_log_b, disp_pd))
+            else:
+                losses.update(self.loss_disp(disp_pred, tgt_disp))
         if log:
             valid = (tgt_disp > 0) & (tgt_disp < self.max_disp)
             err = torch.abs(disp - tgt_disp)
@@ -448,12 +524,15 @@ class Criterion(nn.Module):
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer
         if 'aux_outputs' in outputs:
             for i, aux_outputs in enumerate(outputs['aux_outputs']):
+                disp_pred = aux_outputs['disp_pred']
                 if 'logits_pred' in aux_outputs:
-                    disp_pred = aux_outputs['disp_pred'] * 8
                     logits_pred = aux_outputs['logits_pred']
                     l_dict = self.loss_coarse(disp_pred, logits_pred, tgt_disp)
+                elif 'w_and_log_b' in aux_outputs:
+                    w_and_log_b = aux_outputs['w_and_log_b']
+                    disp_pd = aux_outputs['disp_pd']
+                    l_dict = self.loss_disp_nf(disp_pred, tgt_disp, w_and_log_b, disp_pd)
                 else:
-                    disp_pred = aux_outputs['disp_pred'] * 4
                     l_dict = self.loss_disp(disp_pred, tgt_disp)
                 l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
                 losses.update(l_dict)

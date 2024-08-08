@@ -46,7 +46,7 @@ def get_extensions():
     include_dirs = [extensions_dir]
     ext_modules = [
         extension(
-            'MultiScaleDeformableAttention',
+            'NeSyStereo',
             sources,
             include_dirs=include_dirs,
             define_macros=define_macros,
@@ -57,12 +57,12 @@ def get_extensions():
 
 
 setup(
-    name='MultiScaleDeformableAttention',
+    name='NeSyStereo',
     version='1.0',
-    author='Weijie Su',
-    url='https://github.com/fundamentalvision/Deformable-DETR',
+    author='Tongfan Guan',
+    url='https://github.com/aeolusguan/NMRF',
     description=
-    'PyTorch Wrapper for CUDA Functions of Multi-Scale Deformable Attention',
+    'PyTorch Wrapper for CUDA Functions of Stereo Neural-Symbolic Learning',
     packages=find_packages(exclude=(
         'configs',
         'tests',
