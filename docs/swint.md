@@ -6,3 +6,9 @@ and
 ```shell
 python inference.py --dataset-name kitti_2012 --output $your_directory --config-file configs/kitti-mix-train-swint.yaml SOLVER.RESUME pretrained/kitti_swint.pth
 ```
+
+To train on SceneFlow dataset, you can run following commands in the project directory:
+```shell
+wget https://github.com/SwinTransformer/storage/releases/download/v1.0.0/swin_tiny_patch4_window7_224.pth
+python main.py --num-gpus --config-file configs/sceneflow-swint.yaml BACKBONE.WEIGHT_URL swin_tiny_patch4_window7_224.pth
+```
