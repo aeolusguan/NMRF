@@ -1,0 +1,5 @@
+BACKBONE:
+  MODEL_TYPE: "swin"
+  OUT_CHANNELS: 128
+  DROP_PATH: 0.4
+  COMPAT: False
