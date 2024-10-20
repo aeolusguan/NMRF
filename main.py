@@ -306,7 +306,8 @@ def evaluate(model, cfg):
         data_loader = build_val_loader(cfg, dataset_name)
         # build evaluator for this dataset
         evaluator = evaluation.DispEvaluator(thres=cfg.TEST.EVAL_THRESH[idx], only_valid=cfg.TEST.EVAL_ONLY_VALID[idx],
-                                             max_disp=cfg.TEST.EVAL_MAX_DISP[idx], eval_prop=cfg.TEST.EVAL_PROP[idx])
+                                             max_disp=cfg.TEST.EVAL_MAX_DISP[idx], eval_prop=cfg.TEST.EVAL_PROP[idx],
+                                             divis_by=cfg.DATASETS.DIVIS_BY)
         results_i = evaluation.inference_on_dataset(model, data_loader, evaluator)
         results[dataset_name] = results_i
         if comm.is_main_process():
