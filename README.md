@@ -172,4 +172,4 @@ If you find our work useful in your research, please consider citing our paper:
 ```
 
 ## Acknowledgements
-This project would not have been possible without relying on some awesome repos: [RAFT-Stereo](https://github.com/princeton-vl/RAFT-Stereo), [Detectron2](https://github.com/facebookresearch/detectron2), and [Swin](https://github.com/microsoft/Swin-Transformer).
+This project would not have been possible without relying on some awesome repos: [RAFT-Stereo](https://github.com/princeton-vl/RAFT-Stereo), [Detectron2](https://github.com/facebookresearch/detectron2), and [Swin](https://github.com/microsoft/Swin-Transformer). The code from all those third-party models is not included in the MIT license. Please refer to the original authors for the license of these third-party codes.
