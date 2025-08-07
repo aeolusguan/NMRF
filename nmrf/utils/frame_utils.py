@@ -1,6 +1,4 @@
 import torch.nn.functional as F
-import torch
-from einops import rearrange
 
 import numpy as np
 from PIL import Image
@@ -11,8 +9,6 @@ import imageio
 import cv2
 cv2.setNumThreads(0)
 cv2.ocl.setUseOpenCL(False)
-
-from ops.functions import downsample
 
 TAG_CHAR = np.array([202021.25], np.float32)
 
@@ -243,15 +239,6 @@ def writeDispKITTI(filename, disp):
     cv2.imwrite(filename, disp)
 
 
-def readOcclusionMap(filename):
-    return cv2.imread(filename)
-
-
-def read_super_pixel_label(filename):
-    label = cv2.imread(filename, cv2.IMREAD_ANYCOLOR | cv2.IMREAD_ANYDEPTH).astype(np.int32)
-    return label
-
-
 def read_gen(file_name, pil=False):
     ext = splitext(file_name)[-1]
     if ext == '.png' or ext == '.jpeg' or ext == '.ppm' or ext == '.jpg':
@@ -267,23 +254,6 @@ def read_gen(file_name, pil=False):
         else:
             return flow[:, :, :-1]
     return []
-
-
-def downsample_disp(disp, label, stride=8):
-    ht, wd = disp.shape[-2:]
-    right_pad = (stride - wd % stride) % stride
-    down_pad = (stride - ht % stride) % stride
-    disp = F.pad(disp, pad=(0, right_pad, 0, down_pad), mode='constant', value=0)
-    label = F.pad(label, pad=(0, right_pad, 0, down_pad), mode='constant', value=-1)
-    bs, ht, wd = disp.shape
-    disp = rearrange(disp, 'b (h hs) (w ws) -> (b h w) (hs ws)', hs=stride, ws=stride)
-    disp = disp.contiguous()
-    label = rearrange(label, 'b (h hs) (w ws) -> (b h w) (hs ws)', hs=stride, ws=stride)
-    label = label.contiguous()
-    label, idx = torch.sort(label, dim=-1)
-    disp = torch.gather(disp, dim=-1, index=idx)
-    disp_mini = downsample(disp, label, 0.5).reshape(bs, ht//8, wd//8, 4)
-    return disp_mini
 
 
 class InputPadder:

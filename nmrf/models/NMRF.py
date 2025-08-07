@@ -1,14 +1,11 @@
-import math
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 from timm.models.layers import trunc_normal_
 
-from nmrf.utils.frame_utils import InputPadder, downsample_disp
+from nmrf.utils.frame_utils import InputPadder
 from nmrf.config import configurable
-from nmrf.models.matcher import bf_match
 from nmrf.models.backbone import create_backbone
 from nmrf.models.DPN import DPN
 from nmrf.models.submodule import build_correlation_volume
@@ -302,58 +299,36 @@ class Criterion(nn.Module):
             self.loss_fn = F.l1_loss
 
     def loss_prop(self, disp_prop, gt_disp):
+        """
+        disp_prop: [B,hw,N]
+        gt_disp: [B,H,W], where H=8*h, W=8*w
+        """
         tgt_disp = gt_disp.clone()
-        # ground truth modes larger than 320 are ignored in following sort and matching
+        # ground truth modes larger than 320 are ignored in following matching
         tgt_disp[tgt_disp >= 320] = 0
-        dist = (tgt_disp[:, :, None] - disp_prop[:, None, :]).abs()
-        dist[tgt_disp == 0, :] = 1e6  # avoid assigned to null gt
-        dist = torch.min(dist, dim=-1, keepdim=False)[0]
-        indices = dist.argsort(dim=-1)
-        # sort ground truth modes based on distance to the proposal set
-        tgt_disp = torch.gather(tgt_disp, dim=-1, index=indices)
-
-        # nms
-        for i in range(3):
-            dist = (tgt_disp[:, i+1:] - tgt_disp[:, i:i+1]).abs()
-            mask = (tgt_disp[:, i:i+1] > 0) & (dist < 8)
-            tgt_disp[:, i+1:][mask] = 0
-
-        # Retrieve the bipartite matching between proposals and ground truth modes
-        num_seed = disp_prop.shape[1]
-        if num_seed < 4:
-            disp_prop_pad = tgt_disp.clone()
-            disp_prop_pad[:, :num_seed] = disp_prop
-            disp_prop = disp_prop_pad
-        indices, disp_error = bf_match(disp_prop, tgt_disp)
-        src_disp = torch.gather(disp_prop, dim=1, index=indices)
-
+        tgt_disp = rearrange(tgt_disp, 'b (h m) (w n) -> b (h w) (m n)', m=8, n=8)
+        dist = (tgt_disp[:, :, :, None] - disp_prop[:, :, None, :]).abs()
+        _, indices = torch.min(dist, dim=-1, keepdim=False)
+        src_disp = torch.gather(disp_prop, dim=-1, index=indices)
+    
         mask = (tgt_disp > 0) & (tgt_disp < self.max_disp)
         total_gts = torch.sum(mask)
         # disparity loss for matched predictions
         loss_disp = F.smooth_l1_loss(src_disp[mask], tgt_disp[mask], reduction='sum')
-        losses = {'proposal_disp': loss_disp / (total_gts + 1e-6)}
-
-        # for logging
-        valid_pixs = disp_error[disp_error != 1e5]
-        losses['disp_error'] = valid_pixs.sum() / (valid_pixs.numel() + 1e-6)
-
+        losses = {'loss_prop': loss_disp / (total_gts + 1e-6)}
+    
         return losses
 
     @staticmethod
-    def loss_init(prob, gt_disp, occlusion_map, occlusion_map_2):
+    def loss_init(prob, gt_disp):
         nd = prob.shape[-1]
         bs, ht, wd = gt_disp.shape
         gt_disp = torch.clamp(gt_disp, min=0)
-        valid = (gt_disp > 0) & (gt_disp < 320) & (~occlusion_map)
+        valid = (gt_disp > 0) & (gt_disp < 320)
 
         ref = torch.arange(0, wd, dtype=torch.int64, device=prob.device).reshape(1, 1, -1).repeat(bs, ht, 1)
         coord = ref - gt_disp  # corresponding coordinate in the right view
         valid = torch.logical_and(valid, coord >= 0)  # correspondence should within image boundary
-        coord = torch.clamp(torch.floor(coord), min=0).to(torch.int64)
-        nocc_map_2 = ~occlusion_map_2
-        nocc_map_2 = torch.gather(nocc_map_2, dim=-1, index=coord)  # whether correspondence is occluded
-
-        valid = torch.logical_and(valid, nocc_map_2)
 
         # scale ground-truth disparities
         tgt_disp = gt_disp / 8
@@ -421,22 +396,15 @@ class Criterion(nn.Module):
 
         prob = outputs_without_aux['prob']  # [B*H*W,D]
         disp_prop = outputs_without_aux['proposal'] * 8  # [B,H*W,N]
-        disp_prop = rearrange(disp_prop, 'b l n -> (b l) n')  # [B*H*W,N]
         disp = outputs_without_aux['disp']
         device = disp.device
 
         tgt_disp = targets['disp'].to(device)
         valid = targets['valid'].to(device)
         tgt_disp[~valid] = 0
-        occlusion_map = targets['occlusion_map'].to(device)
-        occlusion_map_2 = targets['occlusion_map_2'].to(device)
-        label = targets['super_pixel_label'].to(device)
-        tgt_disp_mini = downsample_disp(tgt_disp, label)
-        bs, ht = tgt_disp_mini.shape[:2]
-        tgt_disp_mini = tgt_disp_mini.reshape(-1, 4)  # [B*H*W, 4]
 
-        losses = self.loss_prop(disp_prop, tgt_disp_mini)
-        losses.update(self.loss_init(prob, tgt_disp, occlusion_map, occlusion_map_2))
+        losses = self.loss_prop(disp_prop, tgt_disp)
+        losses.update(self.loss_init(prob, tgt_disp))
         if 'disp_pred' in outputs_without_aux:
             disp_pred = outputs_without_aux['disp_pred'] * 4
             losses.update(self.loss_disp(disp_pred, tgt_disp))

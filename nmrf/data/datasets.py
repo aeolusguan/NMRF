@@ -10,7 +10,6 @@ import copy
 from pathlib import Path
 from glob import glob
 import os.path as osp
-import cv2
 
 from nmrf.utils import frame_utils
 from nmrf.utils import dist_utils as comm
@@ -47,7 +46,6 @@ class StereoDataset(data.Dataset):
         self.flow_list = []
         self.disparity_list = []
         self.image_list = []
-        self.occ_map_list = []
         self.extra_info = []
 
     def __getitem__(self, index):
@@ -79,26 +77,12 @@ class StereoDataset(data.Dataset):
 
         img1 = frame_utils.read_gen(self.image_list[index][0])
         img2 = frame_utils.read_gen(self.image_list[index][1])
-        super_pixel_label = self.image_list[index][0][:-len('.png')] + "_lsc_lbl.png"
-        if not os.path.exists(super_pixel_label):
-            img = cv2.cvtColor(np.array(img1), cv2.COLOR_RGB2BGR)
-            lsc = cv2.ximgproc.createSuperpixelLSC(img, region_size=10, ratio=0.075)
-            lsc.iterate(20)
-            label = lsc.getLabels()
-            cv2.imwrite(super_pixel_label, label.astype(np.uint16))
-        super_pixel_label = frame_utils.read_super_pixel_label(super_pixel_label)
-
         img1 = np.array(img1).astype(np.uint8)
         img2 = np.array(img2).astype(np.uint8)
 
         disp = np.array(disp).astype(np.float32)
 
         flow = np.stack([disp, np.zeros_like(disp)], axis=-1)
-
-        try:
-            occlusion_map = frame_utils.readOcclusionMap(self.occ_map_list[index])[..., 0] < 128
-        except Exception as e:
-            occlusion_map = np.zeros_like(disp, dtype=bool)
 
         # grayscale images
         if len(img1.shape) == 2:
@@ -110,11 +94,9 @@ class StereoDataset(data.Dataset):
 
         if self.augmentor is not None:
             if self.sparse:
-                img1, img2, flow, super_pixel_label, occlusion_map, occlusion_map_2, valid = self.augmentor(img1, img2, flow, super_pixel_label, occlusion_map, valid)
+                img1, img2, flow, valid = self.augmentor(img1, img2, flow, valid)
             else:
-                img1, img2, flow, super_pixel_label, occlusion_map, occlusion_map_2 = self.augmentor(img1, img2, flow, super_pixel_label, occlusion_map)
-        else:
-            occlusion_map_2 = np.zeros(img1.shape[:2], dtype=bool)
+                img1, img2, flow = self.augmentor(img1, img2, flow)
 
         sample['img1'] = torch.from_numpy(img1).permute(2, 0, 1).float()
         sample['img2'] = torch.from_numpy(img2).permute(2, 0, 1).float()
@@ -124,10 +106,6 @@ class StereoDataset(data.Dataset):
             valid = torch.from_numpy(valid)
         else:
             valid = sample['disp'] < 512
-
-        sample['super_pixel_label'] = torch.from_numpy(super_pixel_label)
-        sample['occlusion_map'] = torch.from_numpy(occlusion_map)
-        sample['occlusion_map_2'] = torch.from_numpy(occlusion_map_2)
         sample['valid'] = valid
 
         if self.img_pad is not None:
@@ -142,7 +120,6 @@ class StereoDataset(data.Dataset):
         copy_of_self.flow_list = v * copy_of_self.flow_list
         copy_of_self.image_list = v * copy_of_self.image_list
         copy_of_self.disparity_list = v * copy_of_self.disparity_list
-        copy_of_self.occ_map_list = v * copy_of_self.occ_map_list
         copy_of_self.extra_info = v * copy_of_self.extra_info
         return copy_of_self
 
@@ -171,15 +148,10 @@ class SceneFlowDatasets(StereoDataset):
         left_images = sorted( glob(osp.join(root, self.dstype, split, '*/*/left/*.png')) )
         right_images = [ im.replace('left', 'right') for im in left_images ]
         disparity_images = [ im.replace(self.dstype, 'disparity').replace('.png', '.pfm') for im in left_images ]
-        occ_map_images = [ im.replace('.pfm', '_nocc.png') for im in disparity_images ]
 
-        for img1, img2, disp, occ_map in zip(left_images, right_images, disparity_images, occ_map_images):
-            if img1.endswith('_lsc_lbl.png'):
-                continue
+        for img1, img2, disp in zip(left_images, right_images, disparity_images):
             self.image_list += [ [img1, img2] ]
             self.disparity_list += [ disp ]
-            if split == 'TRAIN':
-                self.occ_map_list += [ occ_map ]
         logging.info(f"Added {len(self.disparity_list) - original_length} from FlyingThings {self.dstype}")
 
     def _add_monkaa(self):
@@ -188,14 +160,10 @@ class SceneFlowDatasets(StereoDataset):
         left_images = sorted( glob(osp.join(root, self.dstype, '*/left/*.png')) )
         right_images = [ image_file.replace('left', 'right') for image_file in left_images ]
         disparity_images = [ im.replace(self.dstype, 'disparity').replace('.png', '.pfm') for im in left_images ]
-        occ_map_images = [ im.replace('.pfm', '_nocc.png') for im in disparity_images ]
 
-        for img1, img2, disp, occ_map in zip(left_images, right_images, disparity_images, occ_map_images):
-            if img1.endswith('_lsc_lbl.png'):
-                continue
+        for img1, img2, disp, occ_map in zip(left_images, right_images, disparity_images):
             self.image_list += [ [img1, img2] ]
             self.disparity_list += [ disp ]
-            self.occ_map_list += [ occ_map ]
         logging.info(f"Added {len(self.disparity_list) - original_length} from Monkaa {self.dstype}")
 
     def _add_driving(self):
@@ -204,14 +172,10 @@ class SceneFlowDatasets(StereoDataset):
         left_images = sorted( glob(osp.join(root, self.dstype, '*/*/*/left/*.png')) )
         right_images = [ image_file.replace('left', 'right') for image_file in left_images ]
         disparity_images = [ im.replace(self.dstype, 'disparity').replace('.png', '.pfm') for im in left_images ]
-        occ_map_images = [ im.replace('.pfm', '_nocc.png') for im in disparity_images ]
 
-        for img1, img2, disp, occ_map in zip(left_images, right_images, disparity_images, occ_map_images):
-            if img1.endswith('_lsc_lbl.png'):
-                continue
+        for img1, img2, disp, occ_map in zip(left_images, right_images, disparity_images):
             self.image_list += [ [img1, img2] ]
             self.disparity_list += [ disp ]
-            self.occ_map_list += [ occ_map ]
         logging.info(f"Added {len(self.disparity_list) - original_length} from Driving {self.dstype}")
 
 

@@ -7,6 +7,5 @@
 # ------------------------------------------------------------------------------------------------
 
 from .ms_deform_attn_func import MSDeformAttnFunction
-from .downsample_func import downsample
 
-__all__ = ['MSDeformAttnFunction', 'downsample']
+__all__ = ['MSDeformAttnFunction']

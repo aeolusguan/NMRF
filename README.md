@@ -93,13 +93,6 @@ Our folder structure is as follows:
             └── frames_finalpass
 ```
 
-### (Optional) Occlusion mask
-
-We provide a script to generate occlusion mask for Scene Flow dataset. This may bring **marginal** performance improvement.
-```shell
-python tools/generate_occlusion_map.py
-```
-
 
 
 ## Demos
