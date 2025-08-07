@@ -6,6 +6,7 @@ Official PyTorch implementation of paper:
 Tongfan Guan, Chen Wang, Yun-Hui Liu<br/>
 
 ## :new: Updates
+- `[2025/08/07]`: Improve `initialization` and `proposal` loss to keep pace with [OmniDepth](https://github.com/aeolusguan/OmniDepth).
 - `[2024/07/18]`: :rocket: [NMRF-Stereo-SwinT](docs/swint.md) ranks first on KITTI 2012 and KITTI 2015-NOC, with the ImageNet pretrained [Swin-T](https://github.com/SwinTransformer/storage/releases/download/v1.0.0/swin_tiny_patch4_window7_224.pth) as backbone.
 
 ## Introduction
