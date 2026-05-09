@@ -1,12 +1,61 @@
-import copy
 import math
+from typing import Callable, Optional
 
 import torch
 import torch.nn.functional as F
-from torch import nn
+from torch import nn, Tensor
 from einops import rearrange, repeat
-from timm.models.layers import Mlp, DropPath, to_2tuple
 
+
+class Mlp(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        hidden_features: Optional[int] = None,
+        out_features: Optional[int] = None,
+        act_layer: Callable[..., nn.Module] = nn.GELU,
+        drop: float = 0.0,
+        bias: bool = True,
+    ) -> None:
+        super().__init__()
+        out_features = out_features or in_features
+        hidden_features = hidden_features or in_features
+        self.fc1 = nn.Linear(in_features, hidden_features, bias=bias)
+        self.act = act_layer()
+        self.fc2 = nn.Linear(hidden_features, out_features, bias=bias)
+        self.drop = nn.Dropout(drop)
+
+    def forward(self, x: Tensor) -> Tensor:
+        x = self.fc1(x)
+        x = self.act(x)
+        x = self.drop(x)
+        x = self.fc2(x)
+        x = self.drop(x)
+        return x
+    
+
+def drop_path(x, drop_prob: float = 0.0, training: bool = False):
+    if drop_path == 0.0 or not training:
+        return x
+    keep_prob = 1 - drop_prob
+    shape = (x.shape[0],) + (1,) * (x.ndim - 1)  # work with diff dim tensors, not just 2D ConvNets
+    random_tensor = x.new_empty(shape).bernoulli_(keep_prob)
+    if keep_prob > 0.0:
+        random_tensor.div_(keep_prob)
+    output = x * random_tensor
+    return output
+
+
+class DropPath(nn.Module):
+    """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks)."""
+
+    def __init__(self, drop_prob=None):
+        super(DropPath, self).__init__()
+        self.drop_prob = drop_prob
+
+    def forward(self, x):
+        return drop_path(x, self.drop_prob, self.training)
+    
 
 def fourier_grid_embed(data, embed_dim):
     """data format: B[spatial dims]C
@@ -290,6 +339,15 @@ class WindowAttention(nn.Module):
 
     def extra_repr(self) -> str:
         return f'dim={self.dim}, window_size={self.window_size}, shift_size={self.shift_size}, num_heads={self.num_heads}'
+
+
+def to_2tuple(x):
+    if isinstance(x, tuple):
+        assert len(x) == 2
+        return x
+    
+    assert isinstance(x, int)
+    return (x, x)
 
 
 class SwinNMP(nn.Module):

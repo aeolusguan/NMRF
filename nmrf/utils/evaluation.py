@@ -11,6 +11,7 @@ import numpy as np
 import torch
 from torch import nn
 from torch.utils.data.sampler import Sampler
+import einops
 
 from nmrf.utils.logger import log_every_n_seconds
 from nmrf.utils import dist_utils as comm
@@ -314,6 +315,7 @@ class DispEvaluator(DatasetEvaluator):
         self._epe = []
         self._thres_metric = OrderedDict()
         self._d1 = []
+        self._val = []
 
         if self._thres is not None:
             for t in self._thres:
@@ -350,7 +352,8 @@ class DispEvaluator(DatasetEvaluator):
                 continue
 
             self._epe.append(epe[val].mean().item())
-            self._d1.append(((epe[val] > 3) & (epe[val] / disp_gt.flatten()[val] > 0.05)).float().mean().item())
+            self._d1.append(((epe[val] > 3) & (epe[val] / disp_gt.flatten()[val] > 0.05)).float().sum().item())
+            self._val.append(val.sum().item())
 
             if len(self._thres_metric) > 0:
                 for t in self._thres:
@@ -360,22 +363,14 @@ class DispEvaluator(DatasetEvaluator):
 
             if self._eval_prop:
                 proposal = output['proposal'] * 8
-                superpixel_label = input['super_pixel_label'].to(disp_pr.device)
                 disp_gt_clone = disp_gt.clone()
                 disp_gt_clone[~valid_gt] = 0
-                mini_disp_gt = frame_utils.downsample_disp(disp_gt_clone[None], superpixel_label[None])[0]
-                im_h, im_w = disp_gt.shape[:2]
-                _im_h = int((im_h + self._divis_by - 1) // self._divis_by * self._divis_by // 8)
-                _im_w = int((im_w + self._divis_by - 1) // self._divis_by * self._divis_by // 8)
-                ht, wd = mini_disp_gt.shape[:2]
-                _, num_proposals = proposal.shape
-                proposal = proposal.reshape(_im_h, _im_w, num_proposals)
-                proposal = proposal[:ht, :wd, :].reshape(-1, num_proposals)
-                mini_disp_gt = mini_disp_gt.flatten(end_dim=1)
-                epe = torch.cdist(mini_disp_gt[..., None], proposal[..., None], p=1)
-                epe[mini_disp_gt == 0, :] = 1e6
-                epe, _ = torch.min(epe.flatten(start_dim=1), dim=1)
-                mask = (((mini_disp_gt > 0) & (mini_disp_gt < self._max_disp)).sum(dim=-1)) > 0.5
+                padder = frame_utils.InputPadder(disp_gt_clone.shape, mode='nmrf', divis_by=self._divis_by)
+                disp_gt_clone = padder.pad(disp_gt_clone[None][None])[0]
+                disp_gt = einops.rearrange(disp_gt_clone, '1 1 (h m) (w n) -> (h w) (m n)', m=8, n=8)
+                epe = torch.cdist(disp_gt[..., None], proposal[..., None], p=1)
+                epe, _ = torch.min(epe, dim=-1, keepdim=False)
+                mask = (disp_gt > 0) & (disp_gt < self._max_disp)
                 if np.isnan(epe[mask].mean().item()):
                     continue
                 self._prop_epe.append(epe[mask].mean().item())
@@ -387,6 +382,7 @@ class DispEvaluator(DatasetEvaluator):
             comm.synchronize()
             epe = list(itertools.chain(*comm.gather(self._epe, dst=0)))
             d1 = list(itertools.chain(*comm.gather(self._d1, dst=0)))
+            val = list(itertools.chain(*comm.gather(self._val, dst=0)))
             thres_metric = OrderedDict()
             for k, v in self._thres_metric.items():
                 thres_metric[k] = list(itertools.chain(*comm.gather(v, dst=0)))
@@ -398,13 +394,14 @@ class DispEvaluator(DatasetEvaluator):
         else:
             epe = self._epe
             d1 = self._d1
+            val = self._val
             thres_metric = self._thres_metric
             prop_epe = self._prop_epe
             prop_recall_3 = self._prop_recall_3
             prop_recall_8 = self._prop_recall_8
 
         epe = torch.tensor(epe).mean().item()
-        d1 = torch.tensor(d1).mean().item() * 100
+        d1 = torch.tensor(d1).sum().item() / torch.tensor(val).sum().item() * 100
         res = {'epe': epe, 'd1': d1}
         for k, v in thres_metric.items():
             res[f'bad {k}'] = torch.tensor(v).mean().item() * 100

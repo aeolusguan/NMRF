@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-from timm.models.layers import trunc_normal_
+from torch.nn.init import trunc_normal_
 from einops import rearrange
 
 from nmrf.models.NMP import MLP, Propagation, PropagationLayer

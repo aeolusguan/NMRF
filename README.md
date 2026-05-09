@@ -41,11 +41,13 @@ Our code is developed on Ubuntu 20.04 using Python 3.8 and PyTorch 1.13. Please 
 1. Create the `NMRF` conda environment and install all dependencies:
 
 ```shell
-conda env create -f environment.yml
+conda create -n NMRF python=3.10
 conda activate NMRF
+pip install torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cu126  # use the correct version of cuda for your system
+pip install -r requirement.txt
 ```
 
-2. Build deformable attention and superpixel-guided disparity downsample operator:
+2. (Optional) Build deformable attention (only required if Swin-T backbone is used):
 
 ```shell
 cd ops && sh make.sh && cd ..
